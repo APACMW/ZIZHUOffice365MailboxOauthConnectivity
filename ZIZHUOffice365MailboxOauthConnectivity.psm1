@@ -1,23 +1,31 @@
 <#
 
+  Referce article with more insides 
+ https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth
+  https://techcommunity.microsoft.com/t5/exchange-team-blog/announcing-oauth-2-0-client-credentials-flow-support-for-pop-and/ba-p/3562963
+  https://github.com/DanijelkMSFT/ThisandThat/blob/main/Get-IMAPAccessToken.ps1
+  https://github.com/singhbrijraj/SamplePowerShellScripts/blob/main/Get-POP3AccessToken.ps1
+
+    Import-module 'C:\Users\doqi.FAREAST\OneDrive - Microsoft\CodeSamples\Code\ZIZHUOffice365MailboxOauthConnectivity\ZIZHUOffice365MailboxOauthConnectivity.psm1'
     # Connect to ZIZHUOffice365MailboxOauthConnectivity via user sign-in
     $clientID = '06087bc1-286d-47f5-b487-5f0b15a0180d';
     $tenantId = 'cff343b2-f0ff-416a-802b-28595997daa2';
     $redirectUri='https://localhost';
     $loginHint = 'freeman@vjqg8.onmicrosoft.com';    
-    Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -loginHint $loginHint -redirectUri $redirectUri;
+    Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -loginHint $loginHint -redirectUri $redirectUri -Protocol SMTP;
 
-    # Connect to ZIZHUOffice365MailboxOauthConnectivity via user sign-in
+    # Connect to ZIZHUOffice365MailboxOauthConnectivity via client secret
     $clientID = '7bc50456-263a-475d-9fd3-58a50e4e8cf8';
     $tenantId = 'cff343b2-f0ff-416a-802b-28595997daa2';
     $clientsecret='';
     $targetMailbox = 'freeman@vjqg8.onmicrosoft.com';    
-    Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -clientsecret $clientsecret -targetMailbox $targetMailbox;
+    Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -clientsecret $clientsecret -targetMailbox $targetMailbox -Protocol SMTP;
 #>
 enum MailProtocol {
     SMTP    
     IMAP
     POP3
+    Unknown
 }
 [string]$script:tenantID = $null;
 [string]$script:clientId = $null;
@@ -26,11 +34,12 @@ enum MailProtocol {
 [string]$script:loginHint = $null;
 [X509Certificate]$script:clientcertificate = $null;
 $script:AuthResult = $null;
-[string]$script:scope = "https://outlook.office365.com/.default"; 
 [string]$script:office365Server = 'outlook.office365.com';
+[string]$script:scope = "https://$($script:office365Server)/.default"; 
 [string]$script:userMailbox = $null;
-[string]$script:sASLXOAUTH2 = $null;
+[string]$script:SASLXOAUTH2 = $null;
 [int]$script:timeout = 8000;
+$script:mailProtocol = [MailProtocol]::Unknown;
 
 function Show-VerboseMessage {    
     param(
@@ -172,10 +181,15 @@ function Set-SASLXOAUTH2 {
     if ($null -eq $script:userMailbox) {
         Write-Error "Not supply the user mailbox. Exit." -ErrorAction Stop;
     }
+    Get-OauthToken;
+    if (($null -eq $script:AuthResult) -or ($null -eq $script:AuthResult.AccessToken)) {
+        Write-Error "The authentication failure. Can not do Connect-Office365MailboxOauthConnectivity. Please check your app registration in AAD." -ErrorAction Stop;
+    }
+    $accessToken = $script:AuthResult.AccessToken;
     $saslXoauthstring = "user=" + $script:userMailbox + "$([char]0x01)auth=Bearer " + $accessToken + "$([char]0x01)$([char]0x01)";
     $saslXoauthbytes = [System.Text.Encoding]::ASCII.GetBytes($saslXoauthstring);
-    $script:sASLXOAUTH2 = [Convert]::ToBase64String($saslXoauthbytes);
-    Write-Verbose "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] SASL XOAUTH2 login string $script:sASLXOAUTH2";
+    $script:SASLXOAUTH2 = [Convert]::ToBase64String($saslXoauthbytes);
+    Show-VerboseMessage -message "SASL XOAUTH2 login string $script:SASLXOAUTH2";
 }
 
 function Connect-Office365MailboxOauthConnectivity {
@@ -216,6 +230,7 @@ function Connect-Office365MailboxOauthConnectivity {
     param (
         [Parameter(Mandatory = $true)][string]$tenantID,
         [Parameter(Mandatory = $true)][String]$clientId,
+        [Parameter(Mandatory = $true)][MailProtocol]$protocol,
     
         [Parameter(Mandatory = $true, ParameterSetName = "authorizationcode")][String]$redirectUri,
         [Parameter(Mandatory = $true, ParameterSetName = "authorizationcode")][String]$loginHint,
@@ -237,12 +252,12 @@ function Connect-Office365MailboxOauthConnectivity {
 
     $script:tenantID = $tenantID;
     $script:clientId = $clientId;
-    $script:mailProtocol = $mailProtocol;
+    $script:mailProtocol = $protocol;
 
     if (-not [string]::IsNullOrWhiteSpace($clientsecret)) {
         $script:clientsecret = $clientsecret;
     }
-    elseif ($null -ne $clientcertificate) {
+    elseif ($PSBoundParameters.ContainsKey('clientcertificate') -and ($null -ne $clientcertificate)) {
         $script:clientcertificate = $clientcertificate;
     }
     elseif (-not [string]::IsNullOrWhiteSpace($redirectUri)) {
@@ -252,13 +267,15 @@ function Connect-Office365MailboxOauthConnectivity {
     else {
         Write-Error "Not implement." -ErrorAction Stop;
     }
+
+    if ($script:mailProtocol -eq [MailProtocol]::Unknown) {
+        Write-Error "Not specify the mail protocol. Exit." -ErrorAction Stop;
+    }
+    
     Get-OauthToken;
     if ($null -eq $script:AuthResult) {
         Write-Error "The authentication failure. Can not do Connect-Office365MailboxOauthConnectivity. Please check your app registration in AAD." -ErrorAction Stop;
-    }
-
-    Show-AppPermissions $script:AuthResult.accesstoken;
-    Show-InformationalMessage -message "The authentication succeeds. You can test the mail protocol $mailProtocol" -consoleColor Green;
+    }    
 
     if ($PSBoundParameters.ContainsKey('targetMailbox') -and (-not [string]::IsNullOrWhiteSpace($targetMailbox))) { 
         $script:userMailbox = $targetMailbox 
@@ -272,21 +289,9 @@ function Connect-Office365MailboxOauthConnectivity {
     else {
         Write-Error "Not supply the user mailbox. Exit." -ErrorAction Stop;        
     }
-    
-    switch ($mailProtocol) {
-        SMTP {
-            Test-SMTPXOAuth2Connectivity;
-        }
-        IMAP {
-            Test-IMAPXOAuth2Connectivity;
-        }
-        POP3 {
-            Test-POP3XOAuth2Connectivity;
-        }
-        default {
-            Write-Error "Not implement." -ErrorAction Stop;
-        }
-    }
+
+    Show-AppPermissions $script:AuthResult.accesstoken;
+    Show-InformationalMessage -message "The authentication succeeds. You can test the mail protocol $mailProtocol" -consoleColor Green;
 }
 
 function Get-OauthToken {
@@ -311,10 +316,10 @@ function Get-OauthToken {
     if (-not [string]::IsNullOrWhiteSpace($script:redirectUri)) {
         try {
             Show-VerboseMessage "Get-MsalToken via user sign-in";
-            $script:AuthResult = Get-MsalToken -ClientId $script:clientId -TenantId $script:tenantID -Silent -LoginHint $script:loginHint -RedirectUri $script:redirectUri -Scopes $script:scope -AzureCloudInstance $script:AzureCloudInstance;
+            $script:AuthResult = Get-MsalToken -ClientId $script:clientId -TenantId $script:tenantID -Silent -LoginHint $script:loginHint -RedirectUri $script:redirectUri -Scopes $script:scope;
         }
         Catch [Microsoft.Identity.Client.MsalUiRequiredException] {
-            $script:AuthResult = Get-MsalToken -ClientId $script:clientId -TenantId $script:tenantID -Interactive -LoginHint $script:loginHint -RedirectUri $script:redirectUri -Scopes $script:scope  -AzureCloudInstance $script:AzureCloudInstance;
+            $script:AuthResult = Get-MsalToken -ClientId $script:clientId -TenantId $script:tenantID -Interactive -LoginHint $script:loginHint -RedirectUri $script:redirectUri -Scopes $script:scope;
         }
         Catch {
             Show-LastErrorDetails;
@@ -327,10 +332,10 @@ function Get-OauthToken {
             if (-not [string]::IsNullOrWhiteSpace($script:clientsecret)) {
                 Show-VerboseMessage "Get-MsalToken via client crendential auth flow";
                 $securedclientSecret = ConvertTo-SecureString $script:clientsecret -AsPlainText -Force
-                $script:AuthResult = Get-MsalToken -clientID $script:clientId -ClientSecret $securedclientSecret -tenantID $script:tenantID -Scopes $script:scope -AzureCloudInstance $script:AzureCloudInstance;
+                $script:AuthResult = Get-MsalToken -clientID $script:clientId -ClientSecret $securedclientSecret -tenantID $script:tenantID -Scopes $script:scope;
             }
             elseif ($null -ne $script:clientcertificate) {
-                $script:AuthResult = Get-MsalToken -clientID $script:clientId -ClientCertificate $script:clientcertificate -tenantID $script:tenantID -Scopes $script:scope -AzureCloudInstance $script:AzureCloudInstance;
+                $script:AuthResult = Get-MsalToken -clientID $script:clientId -ClientCertificate $script:clientcertificate -tenantID $script:tenantID -Scopes $script:scope;
             }        
         }
         catch {
@@ -341,9 +346,10 @@ function Get-OauthToken {
     Show-VerboseMessage "Succeed to invoke Get-OauthToken";
 }
 
-function Test-SMTPXOAuth2Connectivity {   
+function Test-SMTPXOAuth2Connectivity {
+    Set-SASLXOAUTH2;
     # connecting to Office 365 IMAP Service
-    Show-InformationalMessage -message "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] Connect to Office 365 SMTP Service." -consoleColor DarkGreen;
+    Show-InformationalMessage -message "Connect to Office 365 SMTP Service." -consoleColor DarkGreen;
     $smtpServer = $script:office365Server;
     $smtpPort = '587';
     try {
@@ -380,34 +386,33 @@ function Test-SMTPXOAuth2Connectivity {
         Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
         $CheckCertRevocationStatus = $true;
         $sslStream.AuthenticateAsClient($smtpServer, $null, [System.Security.Authentication.SslProtocols]::Tls12, $CheckCertRevocationStatus);
-        $SSLstreamReader = new-object System.IO.StreamReader($sslStream)
+        $sslstreamReader = new-object System.IO.StreamReader($sslStream)
         $SSLstreamWriter = new-object System.IO.StreamWriter($sslStream)
         $SSLstreamWriter.AutoFlush = $true;
    
         $SSLstreamWriter.WriteLine("EHLO");
-        $response = $SSLstreamReader.ReadLine();
+        $response = $sslstreamReader.ReadLine();
         Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
         if (!$response.StartsWith("250")) {
             Write-Error "Error in EHLO Response" -ErrorAction Stop;
         }
-        while ($streamReader.Peek() -ne -1) {
-            $response = $SSLstreamReader.ReadLine();
+        while ($sslstreamReader.Peek() -ne -1) {
+            $response = $sslstreamReader.ReadLine();
             Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
         }
    
-        Show-InformationalMessage -message "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] Authenticate using XOAuth2." -consoleColor DarkGreen;
         Show-InformationalMessage -message "Authenticate using XOAuth2" -consoleColor DarkGreen;
         # authenticate and check for results
         $command = "auth xoauth2"
         Show-InformationalMessage -message "Client: $command" -consoleColor Green; 
         $SSLstreamWriter.WriteLine($command);
-        $response = $SSLstreamReader.ReadLine();
+        $response = $sslstreamReader.ReadLine();
         Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
    
-        $command = $script:sASLXOAUTH2;
+        $command = $script:SASLXOAUTH2;
         Show-InformationalMessage -message "Client: $command" -consoleColor Green; 
         $SSLstreamWriter.WriteLine($command);
-        $response = $SSLstreamReader.ReadLine();
+        $response = $sslstreamReader.ReadLine();
         Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
 
         $SendingAddress = $script:userMailbox;
@@ -416,37 +421,38 @@ function Test-SMTPXOAuth2Connectivity {
             $command = "MAIL FROM: <" + $SendingAddress + ">";
             Show-InformationalMessage -message "Client: $command" -consoleColor Green;
             $SSLstreamWriter.WriteLine($command) 
-            $response = $SSLstreamReader.ReadLine();
+            $response = $sslstreamReader.ReadLine();
             Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
             $command = "RCPT TO: <" + $To + ">";
             Show-InformationalMessage -message "Client: $command" -consoleColor Green;
             $SSLstreamWriter.WriteLine($command);
-            $response = $SSLstreamReader.ReadLine();
+            $response = $sslstreamReader.ReadLine();
             Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
             $command = "DATA";
             Show-InformationalMessage -message "Client: $command" -consoleColor Green;
             $SSLstreamWriter.WriteLine($command);
-            $response = $SSLstreamReader.ReadLine()
+            $response = $sslstreamReader.ReadLine()
             Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
             $SSLstreamWriter.WriteLine("Subject:test");
             $SSLstreamWriter.WriteLine([string]::Empty);
             $SSLstreamWriter.WriteLine("This is a test message");
             $SSLstreamWriter.WriteLine('.');
-            $response = $SSLstreamReader.ReadLine();
+            $response = $sslstreamReader.ReadLine();
             Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
             $command = "QUIT";
             Show-InformationalMessage -message "Client: $command" -consoleColor Green;
             $SSLstreamWriter.WriteLine($command);
-            $response = $SSLstreamReader.ReadLine();
+            $response = $sslstreamReader.ReadLine();
             Show-InformationalMessage -message "Server: $response" -consoleColor Yellow;
         }
         else {
-            Show-InformationalMessage -message "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] ERROR during authentication $ResponseStr" -consoleColor Red;
+            Show-InformationalMessage -message "ERROR during authentication $ResponseStr" -consoleColor Red;
         }
 
-        @($SSLstreamWriter, $SSLstreamReader, $sslStream, $streamWriter, $streamReader, $stream, $tcpClient) | ForEach-Object {
+        # Session cleanup
+        @($SSLstreamWriter, $sslstreamReader, $sslStream, $streamWriter, $streamReader, $stream, $tcpClient) | ForEach-Object {
             if ($null -ne $psitem) {
-                $psitem.Close();
+                $psitem.Dispose();
             }
         }
     }
@@ -462,14 +468,100 @@ function Test-IMAPXOAuth2Connectivity {
     $ComputerName = $script:office365Server;
     $Port = '993';
     try {
-        $TCPConnection = New-Object System.Net.Sockets.Tcpclient($($ComputerName), $Port);
-        $TCPStream = $TCPConnection.GetStream();
+        $tcpClient = New-Object System.Net.Sockets.Tcpclient($($ComputerName), $Port);
+        $tcpStream = $tcpClient.GetStream();
         try {
-            $SSLStream  = New-Object System.Net.Security.SslStream($TCPStream);
+            $sslStream = New-Object System.Net.Security.SslStream($tcpStream);
+            $sslStream.ReadTimeout = $script:timeout;
+            $sslStream.WriteTimeout = $script:timeout;
+            $CheckCertRevocationStatus = $true;
+            $sslStream.AuthenticateAsClient($ComputerName, $null, [System.Security.Authentication.SslProtocols]::Tls12, $CheckCertRevocationStatus)
+        }
+        catch {
+            Show-LastErrorDetails;
+            Write-Error "Ran into an exception while negotating SSL connection. Exiting." -ErrorAction Stop;
+        }
+    }
+    catch {
+        Show-LastErrorDetails;
+        Write-Error "Ran into an exception while opening TCP connection. Exiting." -ErrorAction Stop;
+    }    
+
+    # continue if connection was successfully established
+    $sslstreamReader = new-object System.IO.StreamReader($sslStream);
+    $SSLstreamWriter = new-object System.IO.StreamWriter($sslStream);
+    $SSLstreamWriter.AutoFlush = $true;
+    $SSLstreamWriter.Newline = "`r`n";
+    $sslstreamReader.ReadLine();
+
+    Show-InformationalMessage -message "Authenticate using XOAuth2." -consoleColor DarkGreen;
+    # authenticate and check for results
+    $command = "A01 AUTHENTICATE XOAUTH2 {0}" -f $script:SASLXOAUTH2;
+    Show-InformationalMessage -message "Client: $command" -consoleColor Green;
+    $SSLstreamWriter.WriteLine($command);
+    #respose might take longer sometimes
+    while ($null -eq $responseStr) { 
+        try {
+            $responseStr = $sslstreamReader.ReadLine();
+            Show-InformationalMessage -message "Server: $responseStr" -consoleColor Yellow;
+        }
+        catch { 
+            Show-LastErrorDetails;
+        }
+    }
+    if ( $responseStr -like "*OK AUTHENTICATE completed.") {
+        Show-InformationalMessage -message "Getting mailbox folder list as authentication was successfull." -consoleColor DarkGreen;
+        $command = 'A01 LIST "" *';
+        Show-InformationalMessage -message "Client: $command" -consoleColor Green;
+        $SSLstreamWriter.WriteLine($command);
+
+        $done = $false;
+        $str = $null;
+        while (!$done ) {
+            $str = $sslstreamReader.ReadLine();
+            if ($str -like "* OK LIST completed.") {                
+                $done = $true;
+            } 
+            elseif ($str -like "* BAD User is authenticated but not connected.") { 
+                $str = $str + " Causing Error: IMAP protocol access to mailbox is disabled or permission not granted for client credential flow. Please enable IMAP protcol access or grant fullaccess to service principal."; 
+                $done = $true;
+            }
+            Show-InformationalMessage -message "Server: $str" -consoleColor Yellow;
+        }
+
+        Show-InformationalMessage -message "Logout and cleanup sessions." -consoleColor DarkGreen;
+        $command = 'A01 Logout';
+        Show-InformationalMessage -message "Client: $command" -consoleColor Green;
+        $SSLstreamWriter.WriteLine($command);
+        $responseStr = $sslstreamReader.ReadLine();
+        Show-InformationalMessage -message "Server: $responseStr" -consoleColor Yellow;
+    }
+    else {
+        Show-InformationalMessage -message "ERROR during authentication $responseStr" -consoleColor Red;
+    }
+    # Session cleanup
+    @($SSLstreamWriter, $sslstreamReader, $sslStream, $tcpStream, $tcpClient) | ForEach-Object {
+        if ($null -ne $psitem) {
+            $psitem.Dispose();
+        }
+    }      
+}
+
+function Test-POP3XOAuth2Connectivity {
+    Set-SASLXOAUTH2;
+    # connecting to Office 365 POP3 Service
+    Show-InformationalMessage -message "Connect to Office 365 POP3 Service." -consoleColor DarkGreen;
+    $ComputerName = $script:office365Server;
+    $Port = '995';
+    try {
+        $tcpClient = New-Object System.Net.Sockets.Tcpclient($($ComputerName), $Port);
+        $tcpStream = $tcpClient.GetStream();
+        try {
+            $SSLStream  = New-Object System.Net.Security.SslStream($tcpStream);
             $SSLStream.ReadTimeout = $script:timeout;
             $SSLStream.WriteTimeout = $script:timeout;
             $CheckCertRevocationStatus = $true;
-            $SSLStream.AuthenticateAsClient($ComputerName,$null,[System.Security.Authentication.SslProtocols]::Tls12,$CheckCertRevocationStatus)
+            $SSLStream.AuthenticateAsClient($ComputerName,$null,[System.Security.Authentication.SslProtocols]::Tls12,$CheckCertRevocationStatus);
         }
         catch  {
             Show-LastErrorDetails;
@@ -482,160 +574,115 @@ function Test-IMAPXOAuth2Connectivity {
     }    
 
     # continue if connection was successfully established
-    $SSLstreamReader = new-object System.IO.StreamReader($sslStream);
-    $SSLstreamWriter = new-object System.IO.StreamWriter($sslStream);
-    $SSLstreamWriter.AutoFlush = $true;
-    $SSLstreamWriter.Newline = "`r`n";
-    $SSLstreamReader.ReadLine();
+    $sslstreamReader = new-object System.IO.StreamReader($sslStream);
+    $sslstreamWriter = new-object System.IO.StreamWriter($sslStream);
+    $sslstreamWriter.AutoFlush = $true;
+    $sslstreamReader.ReadLine();
 
     Show-InformationalMessage -message "Authenticate using XOAuth2." -consoleColor DarkGreen;
     # authenticate and check for results
-    $command = "A01 AUTHENTICATE XOAUTH2 {0}" -f $POPIMAPLogin
-    Write-Verbose "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] Executing command -- $command"
-    $SSLstreamWriter.WriteLine($command) 
+	$command = "AUTH XOAUTH2";
+    Show-InformationalMessage -message "Client: $command" -consoleColor Green;
+    $sslstreamWriter.WriteLine($command);
     #respose might take longer sometimes
-    while (!$ResponseStr ) { 
-        try { $ResponseStr = $SSLstreamReader.ReadLine() 
-        } catch { 
+    while ($null -eq $responseStr) { 
+        try {
+            $responseStr = $sslstreamReader.ReadLine();
+            Show-InformationalMessage -message "Server: $responseStr" -consoleColor Yellow;           
+        }
+        catch { 
             Show-LastErrorDetails;
         }
     }
+    if ( -not ($responseStr -like "*+*")){
+        Write-Error "Encounter the authenticaiton failure. Exiting." -ErrorAction Stop;
+	}
 
-    if ( $ResponseStr -like "*OK AUTHENTICATE completed.") 
-    {
-        $ResponseStr
-        Write-Host "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] Getting mailbox folder list as authentication was successfull." -ForegroundColor DarkGreen
-        $command = 'A01 LIST "" *'
-        Write-Verbose "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] Executing command -- $command"
-        $SSLstreamWriter.WriteLine($command) 
-
-        $done = $false
-        $str = $null
-        while (!$done ) {
-            $str = $SSLstreamReader.ReadLine()
-            if ($str -like "* OK LIST completed.") { $str ; $done = $true } 
-            elseif ($str -like "* BAD User is authenticated but not connected.") { $str; "Causing Error: IMAP protocol access to mailbox is disabled or permission not granted for client credential flow. Please enable IMAP protcol access or grant fullaccess to service principal."; $done = $true}
-            else { $str }
-        }
-
-        Write-Host "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] Logout and cleanup sessions." -ForegroundColor DarkGreen
-        $command = 'A01 Logout'
-        Write-Verbose "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] Executing command -- $command"
-        $SSLstreamWriter.WriteLine($command) 
-        $SSLstreamReader.ReadLine()
-
-    } else {
-        Write-host "[$((Get-Date).ToString("yyyy/MM/dd HH:mm:ss.fff"))] ERROR during authentication $ResponseStr" -Foregroundcolor Red
-    }
-
-    # Session cleanup
-    if ($SSLStream) {
-        $SSLStream.Dispose()
-    }
-    if ($TCPStream) {
-        $TCPStream.Dispose()
-    }
-    if ($TCPConnection) {
-        $TCPConnection.Dispose()
-    }    
-}
-
-function Test-POP3XOAuth2Connectivity {
-	Write-Host "Connect to Office 365 POP3 Service." -ForegroundColor DarkGreen;
-    $ComputerName = $script:office365Server;
-    $Port = '995';
-    try {
-        $TCPConnection = New-Object System.Net.Sockets.Tcpclient($($ComputerName), $Port)
-        $TCPStream = $TCPConnection.GetStream()
-        try {
-            $SSLStream  = New-Object System.Net.Security.SslStream($TCPStream)
-            $SSLStream.ReadTimeout = 5000
-            $SSLStream.WriteTimeout = 5000     
-            $CheckCertRevocationStatus = $true
-            $SSLStream.AuthenticateAsClient($ComputerName,$null,[System.Security.Authentication.SslProtocols]::Tls12,$CheckCertRevocationStatus)
-        }
-        catch  {
-            Write-Host "Ran into an exception while negotating SSL connection. Exiting." -ForegroundColor Red
-            $_.Exception.Message
-            break
-        }
-    }
-    catch  {
-    Write-Host "Ran into an exception while opening TCP connection. Exiting." -ForegroundColor Red
-    $_.Exception.Message
-    break
-    }    
-
-    # continue if connection was successfully established
-    $SSLstreamReader = new-object System.IO.StreamReader($sslStream)
-    $SSLstreamWriter = new-object System.IO.StreamWriter($sslStream)
-    $SSLstreamWriter.AutoFlush = $true
-    $SSLstreamReader.ReadLine()
-
-    Write-Host "Authenticate using XOAuth2." -ForegroundColor DarkGreen
-    # authenticate and check for results
-    #$command = "AUTH XOAUTH2 {0}" -f $POPIMAPLogin
-	$command = "AUTH XOAUTH2"
-    Write-Verbose "Executing command -- $command"
-    $SSLstreamWriter.WriteLine($command) 
+    Show-InformationalMessage -message "Passing XOAUTH2 formatted token" -consoleColor DarkGreen;
+    $sslstreamWriter.WriteLine($script:SASLXOAUTH2);
     #respose might take longer sometimes
-    while (!$ResponseStr ) { 
-        try { $ResponseStr = $SSLstreamReader.ReadLine() } catch { }
+    $responseStr = $null;
+    while ($null -eq $responseStr) { 
+        try {
+            $responseStr = $sslstreamReader.ReadLine();                       
+        }
+        catch { 
+            Show-LastErrorDetails;
+        }
     }
-#Write-Verbose $ResponseStr
-    if ( $ResponseStr -like "*+*") 
+    if ($responseStr -like "*+OK*") 
     {
-        $ResponseStr
-	} else {
-        Write-host "ERROR during authentication $ResponseStr" -Foregroundcolor Red
-    }
-	
-		Write-Verbose "Passing XOAUTH2 formatted token"
-		$SSLstreamWriter.WriteLine($POPIMAPLogin) 
-		#respose might take longer sometimes
-    while (!$ResponseStr2 ) { 
-        try { $ResponseStr2 = $SSLstreamReader.ReadLine() } catch { }
-    }
-	
-	Write-Verbose $ResponseStr2
+        Show-InformationalMessage -message "Getting list of messages as authentication was successfull." -consoleColor DarkGreen;
+        $command = 'LIST';
+        Show-InformationalMessage -message "Client: $command" -consoleColor Green;
+        $sslstreamWriter.WriteLine($command);
 
-    if ( $ResponseStr2 -like "*+OK*") 
-    {
-        $ResponseStr
-        Write-Host "Getting list of messages as authentication was successfull." -ForegroundColor DarkGreen
-        $command = 'LIST'
-        Write-Verbose "Executing command -- $command"
-        $SSLstreamWriter.WriteLine($command) 
-
-        $done = $false
-        $str = $null
+        $done = $false;
+        $str = $null;
         while (!$done ) {
-            $str = $SSLstreamReader.ReadLine()
-            if ($str -like "*.") { $str ; $done = $true } 
-            elseif ($str -like "* BAD User is authenticated but not connected.") { $str; "Causing Error: POP3 protcol access to mailbox is disabled or permission not granted for client credential flow. Please enable POP3 protcol access or grant fullaccess to service principal."; $done = $true} 
-            else { $str }
+            $str = $sslstreamReader.ReadLine();
+            if ($str -like "*.") {                
+                $done = $true;
+            } 
+            elseif ($str -like "* BAD User is authenticated but not connected.") { 
+                $str = $str + " Causing Error: POP3 protocol access to mailbox is disabled or permission not granted for client credential flow. Please enable IMAP protcol access or grant fullaccess to service principal."; 
+                $done = $true;
+            }
+            Show-InformationalMessage -message "Server: $str" -consoleColor Yellow;
         }
 
-        Write-Host "Logout and cleanup sessions." -ForegroundColor DarkGreen
-        $command = 'QUIT'
-        Write-Verbose "Executing command -- $command"
-        $SSLstreamWriter.WriteLine($command) 
-        $SSLstreamReader.ReadLine()
-
+        Show-InformationalMessage -message "Logout and cleanup sessions." -consoleColor DarkGreen;
+        $command = 'QUIT';
+        Show-InformationalMessage -message "Client: $command" -consoleColor Green;
+        $sslstreamWriter.WriteLine($command);
+        $responseStr = $sslstreamReader.ReadLine();
+        Show-InformationalMessage -message "Server: $responseStr" -consoleColor Yellow;
     } else {
-        Write-host "ERROR during authentication $ResponseStr2" -Foregroundcolor Red
+        Show-InformationalMessage -message "ERROR during authentication $responseStr" -consoleColor Red;
     }
 
-    # Session cleanup
-    if ($SSLStream) {
-        $SSLStream.Dispose()
-    }
-    if ($TCPStream) {
-        $TCPStream.Dispose()
-    }
-    if ($TCPConnection) {
-        $TCPConnection.Dispose()
+    @($sslstreamWriter, $sslstreamReader, $sslStream, $tcpStream, $tcpClient) | ForEach-Object {
+        if ($null -ne $psitem) {
+            $psitem.Dispose();
+        }
     }
 }
 
-Export-ModuleMember Connect-Office365MailboxOauthConnectivity, Test-SMTPXOAuth2Connectivity, Test-IMAPXOAuth2Connectivity, Test-POP3XOAuth2Connectivity;
+function Test-MailOauthConnectivity {
+    switch ($script:mailProtocol) {
+        SMTP { 
+            Test-SMTPXOAuth2Connectivity;
+         }
+        IMAP {
+            Test-IMAPXOAuth2Connectivity;
+        }
+        POP3 {
+            Test-POP3XOAuth2Connectivity;
+        }
+        Default {
+            Write-Error "Not implement." -ErrorAction Stop;
+        }
+    }
+}
+
+function Set-MailProtocol {
+    param (
+        [Parameter(Mandatory = $true)][MailProtocol]$protocol
+    )
+    $script:mailProtocol = $protocol;
+}
+
+function Disconnect-Office365MailboxOauthConnectivity {
+    [string]$script:tenantID = $null;
+    [string]$script:clientId = $null;
+    [string]$script:clientsecret = $null;
+    [string]$script:redirectUri = $null;
+    [string]$script:loginHint = $null;
+    [X509Certificate]$script:clientcertificate = $null;
+    $script:AuthResult = $null;
+    [string]$script:userMailbox = $null;
+    [string]$script:SASLXOAUTH2 = $null;
+    $script:mailProtocol = [MailProtocol]::Unknown;
+    Show-InformationalMessage -message "Successfuly disconnect from outlook.office365.com" -consoleColor Green;
+}
+Export-ModuleMember Connect-Office365MailboxOauthConnectivity, Test-MailOauthConnectivity,Set-MailProtocol, Disconnect-Office365MailboxOauthConnectivity;
