@@ -584,6 +584,7 @@ function Test-POP3XOAuth2Connectivity {
 	$command = "AUTH XOAUTH2";
     Show-InformationalMessage -message "Client: $command" -consoleColor Green;
     $sslstreamWriter.WriteLine($command);
+    $responseStr = $null;
     #respose might take longer sometimes
     while ($null -eq $responseStr) { 
         try {
