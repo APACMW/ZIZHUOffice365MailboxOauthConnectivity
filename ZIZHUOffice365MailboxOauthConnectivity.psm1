@@ -1,25 +1,60 @@
 <#
+ .Synopsis
+  PowerShell module to test EXO mailbox Oauth connectivity for Admin or dev
 
-  Referce article with more insides 
- https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth
+ .Description
+  PowerShell module to test EXO mailbox Oauth connectivity for Admin or dev. Referce articles below:
+  https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth
   https://techcommunity.microsoft.com/t5/exchange-team-blog/announcing-oauth-2-0-client-credentials-flow-support-for-pop-and/ba-p/3562963
   https://github.com/DanijelkMSFT/ThisandThat/blob/main/Get-IMAPAccessToken.ps1
   https://github.com/singhbrijraj/SamplePowerShellScripts/blob/main/Get-POP3AccessToken.ps1
 
-    Import-module 'C:\Users\doqi.FAREAST\OneDrive - Microsoft\CodeSamples\Code\ZIZHUOffice365MailboxOauthConnectivity\ZIZHUOffice365MailboxOauthConnectivity.psm1'
-    # Connect to ZIZHUOffice365MailboxOauthConnectivity via user sign-in
+ .Example
+   # Installl and import this PowerShell Module
+   https://www.powershellgallery.com/packages/ZIZHUOffice365MailboxOauthConnectivity/1.0
+   https://github.com/APACMW/ZIZHUOffice365MailboxOauthConnectivity
+   Install-Module -Name ZIZHUOffice365MailboxOauthConnectivity
+   Import-Module -Name ZIZHUOffice365MailboxOauthConnectivity
+
+     # Connect to ZIZHUOffice365MailboxOauthConnectivity via user sign-in
     $clientID = '06087bc1-286d-47f5-b487-5f0b15a0180d';
     $tenantId = 'cff343b2-f0ff-416a-802b-28595997daa2';
     $redirectUri='https://localhost';
     $loginHint = 'freeman@vjqg8.onmicrosoft.com';    
     Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -loginHint $loginHint -redirectUri $redirectUri -Protocol SMTP;
+    Test-MailOauthConnectivity;
+    Set-MailProtocol -protocol pop3;
+    Test-MailOauthConnectivity;
+    Set-MailProtocol -protocol imap;
+    Test-MailOauthConnectivity;
+    Disconnect-Office365MailboxOauthConnectivity;    
 
     # Connect to ZIZHUOffice365MailboxOauthConnectivity via client secret
     $clientID = '7bc50456-263a-475d-9fd3-58a50e4e8cf8';
     $tenantId = 'cff343b2-f0ff-416a-802b-28595997daa2';
-    $clientsecret='';
+    $clientsecret='yourclientsecret';
     $targetMailbox = 'freeman@vjqg8.onmicrosoft.com';    
     Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -clientsecret $clientsecret -targetMailbox $targetMailbox -Protocol SMTP;
+    Test-MailOauthConnectivity;
+    Set-MailProtocol -protocol pop3;
+    Test-MailOauthConnectivity;
+    Set-MailProtocol -protocol imap;
+    Test-MailOauthConnectivity;
+    Disconnect-Office365MailboxOauthConnectivity;
+
+    # Connect to ZIZHUOffice365MailboxOauthConnectivity via client secret
+    $clientID = '7bc50456-263a-475d-9fd3-58a50e4e8cf8';
+    $tenantId = 'cff343b2-f0ff-416a-802b-28595997daa2';
+    $thumbprint = '323A5285D82FECC277F1D972148DD3975E061E12';
+    $clientcertificate= get-item "cert:\localmachine\my\$thumbprint";
+    $targetMailbox = 'freeman@vjqg8.onmicrosoft.com';    
+    Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -clientcertificate $clientcertificate -targetMailbox $targetMailbox -Protocol SMTP;
+    Test-MailOauthConnectivity;
+    Set-MailProtocol -protocol pop3;
+    Test-MailOauthConnectivity;
+    Set-MailProtocol -protocol imap;
+    Test-MailOauthConnectivity;
+    Disconnect-Office365MailboxOauthConnectivity;    
 #>
 enum MailProtocol {
     SMTP    
@@ -195,10 +230,10 @@ function Set-SASLXOAUTH2 {
 function Connect-Office365MailboxOauthConnectivity {
     <#
     .SYNOPSIS
-    Initilize the script varibles to prepare for calling APIs
+    Initilize the script varibles to prepare for using mail protocols
     
     .DESCRIPTION
-    Initilize the script varibles to prepare for calling APIs
+    Initilize the script varibles to prepare for using mail protocols
     
     .PARAMETER tenantID
     tenant id
@@ -206,11 +241,17 @@ function Connect-Office365MailboxOauthConnectivity {
     .PARAMETER clientId
     Azure AD application Id
     
+    .PARAMETER protocol
+    The mail protocol: imap, pop3 and smtp
+    
     .PARAMETER redirectUri
     The redirectUri used for implicit auth flow
     
     .PARAMETER loginHint
     The loginHint (user's UPN) used for implicit auth flow
+    
+    .PARAMETER sharedMailbox
+    The shared mailbox used in delegated access scenario
     
     .PARAMETER clientsecret
     The clientsecret used for client credential auth flow
@@ -218,14 +259,14 @@ function Connect-Office365MailboxOauthConnectivity {
     .PARAMETER clientcertificate
     The clientcertificate used for client credential auth flow
     
-    .PARAMETER office365SubscriptionPlanType
-    Tenant type
+    .PARAMETER targetMailbox
+    The target mailbox used in application permission scenario
     
     .EXAMPLE
-    Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -ClientSecret $clientSecret;
+    Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -clientsecret $clientsecret -targetMailbox $targetMailbox -Protocol SMTP;
     
     .NOTES
-    Read how to register the app in Azure AD: https://learn.microsoft.com/en-us/office/office-365-management-api/get-started-with-office-365-management-apis
+    General notes
     #>
     param (
         [Parameter(Mandatory = $true)][string]$tenantID,
@@ -237,7 +278,7 @@ function Connect-Office365MailboxOauthConnectivity {
         [Parameter(Mandatory = $false, ParameterSetName = "authorizationcode")][String]$sharedMailbox,
 
         [Parameter(Mandatory = $true, ParameterSetName = "clientcredentialsSecret")][String]$clientsecret,
-        [Parameter(Mandatory = $true, ParameterSetName = "clientcredentialsCertificate")][String]$clientcertificate,
+        [Parameter(Mandatory = $true, ParameterSetName = "clientcredentialsCertificate")][X509Certificate]$clientcertificate,
 
         [Parameter(Mandatory = $true, ParameterSetName = "clientcredentialsSecret")]
         [Parameter(Mandatory = $true, ParameterSetName = "clientcredentialsCertificate")][String]$targetMailbox        
@@ -347,6 +388,16 @@ function Get-OauthToken {
 }
 
 function Test-SMTPXOAuth2Connectivity {
+    <#
+    .SYNOPSIS
+    Test the smtp connectivity using XOAUTH2 under PS5
+    
+    .DESCRIPTION
+    Test the smtp connectivity using XOAUTH2 under PS5    
+   
+    .NOTES
+    The script doesn't work correctly in PS7
+    #>
     Set-SASLXOAUTH2;
     # connecting to Office 365 IMAP Service
     Show-InformationalMessage -message "Connect to Office 365 SMTP Service." -consoleColor DarkGreen;
@@ -462,6 +513,16 @@ function Test-SMTPXOAuth2Connectivity {
 }
 
 function Test-IMAPXOAuth2Connectivity {
+    <#
+    .SYNOPSIS
+    Test the imap connectivity using XOAUTH2
+    
+    .DESCRIPTION
+    Test the imap connectivity using XOAUTH2
+    
+    .NOTES
+    Reuse the existing script from https://github.com/DanijelkMSFT/ThisandThat/blob/main/Get-IMAPAccessToken.ps1
+    #>
     Set-SASLXOAUTH2;
     # connecting to Office 365 IMAP Service
     Show-InformationalMessage -message "Connect to Office 365 IMAP Service." -consoleColor DarkGreen;
@@ -548,6 +609,16 @@ function Test-IMAPXOAuth2Connectivity {
 }
 
 function Test-POP3XOAuth2Connectivity {
+    <#
+    .SYNOPSIS
+    Test the pop3 connectivity using XOAUTH2
+    
+    .DESCRIPTION
+    Test the imap connectivity using XOAUTH2
+    
+    .NOTES
+    Reuse the existing script from https://github.com/singhbrijraj/SamplePowerShellScripts/blob/main/Get-POP3AccessToken.ps1
+    #>
     Set-SASLXOAUTH2;
     # connecting to Office 365 POP3 Service
     Show-InformationalMessage -message "Connect to Office 365 POP3 Service." -consoleColor DarkGreen;
