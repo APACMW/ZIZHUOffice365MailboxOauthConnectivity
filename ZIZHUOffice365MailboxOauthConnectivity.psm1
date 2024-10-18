@@ -16,7 +16,13 @@
    Install-Module -Name ZIZHUOffice365MailboxOauthConnectivity
    Import-Module -Name ZIZHUOffice365MailboxOauthConnectivity
 
-     # Connect to ZIZHUOffice365MailboxOauthConnectivity via user sign-in
+    # Customers have the accesstoken
+    $token = 'YourAccesstoken';
+    $mailbox= 'freeman@vjqg8.onmicrosoft.com';
+    Set-MailProtocol -protocol SMTP;
+    Test-MailOauthConnectivityWithToken -accessToken $token -targetMailbox $mailbox;   
+
+    # Connect to ZIZHUOffice365MailboxOauthConnectivity via user sign-in
     $clientID = '06087bc1-286d-47f5-b487-5f0b15a0180d';
     $tenantId = 'cff343b2-f0ff-416a-802b-28595997daa2';
     $redirectUri='https://localhost';
@@ -32,7 +38,7 @@
     # Connect to ZIZHUOffice365MailboxOauthConnectivity via client secret
     $clientID = '7bc50456-263a-475d-9fd3-58a50e4e8cf8';
     $tenantId = 'cff343b2-f0ff-416a-802b-28595997daa2';
-    $clientsecret='yourclientsecret';
+    $clientsecret='';
     $targetMailbox = 'freeman@vjqg8.onmicrosoft.com';    
     Connect-Office365MailboxOauthConnectivity -tenantID $tenantId -clientID $clientID -clientsecret $clientsecret -targetMailbox $targetMailbox -Protocol SMTP;
     Test-MailOauthConnectivity;
@@ -398,7 +404,6 @@ function Test-SMTPXOAuth2Connectivity {
     .NOTES
     The script doesn't work correctly in PS7
     #>
-    Set-SASLXOAUTH2;
     # connecting to Office 365 IMAP Service
     Show-InformationalMessage -message "Connect to Office 365 SMTP Service." -consoleColor DarkGreen;
     $smtpServer = $script:office365Server;
@@ -523,7 +528,6 @@ function Test-IMAPXOAuth2Connectivity {
     .NOTES
     Reuse the existing script from https://github.com/DanijelkMSFT/ThisandThat/blob/main/Get-IMAPAccessToken.ps1
     #>
-    Set-SASLXOAUTH2;
     # connecting to Office 365 IMAP Service
     Show-InformationalMessage -message "Connect to Office 365 IMAP Service." -consoleColor DarkGreen;
     $ComputerName = $script:office365Server;
@@ -618,8 +622,7 @@ function Test-POP3XOAuth2Connectivity {
     
     .NOTES
     Reuse the existing script from https://github.com/singhbrijraj/SamplePowerShellScripts/blob/main/Get-POP3AccessToken.ps1
-    #>
-    Set-SASLXOAUTH2;
+    #>    
     # connecting to Office 365 POP3 Service
     Show-InformationalMessage -message "Connect to Office 365 POP3 Service." -consoleColor DarkGreen;
     $ComputerName = $script:office365Server;
@@ -628,18 +631,18 @@ function Test-POP3XOAuth2Connectivity {
         $tcpClient = New-Object System.Net.Sockets.Tcpclient($($ComputerName), $Port);
         $tcpStream = $tcpClient.GetStream();
         try {
-            $SSLStream  = New-Object System.Net.Security.SslStream($tcpStream);
+            $SSLStream = New-Object System.Net.Security.SslStream($tcpStream);
             $SSLStream.ReadTimeout = $script:timeout;
             $SSLStream.WriteTimeout = $script:timeout;
             $CheckCertRevocationStatus = $true;
-            $SSLStream.AuthenticateAsClient($ComputerName,$null,[System.Security.Authentication.SslProtocols]::Tls12,$CheckCertRevocationStatus);
+            $SSLStream.AuthenticateAsClient($ComputerName, $null, [System.Security.Authentication.SslProtocols]::Tls12, $CheckCertRevocationStatus);
         }
-        catch  {
+        catch {
             Show-LastErrorDetails;
             Write-Error "Ran into an exception while negotating SSL connection. Exiting." -ErrorAction Stop;
         }
     }
-    catch  {
+    catch {
         Show-LastErrorDetails;
         Write-Error "Ran into an exception while opening TCP connection. Exiting." -ErrorAction Stop;
     }    
@@ -652,7 +655,7 @@ function Test-POP3XOAuth2Connectivity {
 
     Show-InformationalMessage -message "Authenticate using XOAuth2." -consoleColor DarkGreen;
     # authenticate and check for results
-	$command = "AUTH XOAUTH2";
+    $command = "AUTH XOAUTH2";
     Show-InformationalMessage -message "Client: $command" -consoleColor Green;
     $sslstreamWriter.WriteLine($command);
     $responseStr = $null;
@@ -666,9 +669,9 @@ function Test-POP3XOAuth2Connectivity {
             Show-LastErrorDetails;
         }
     }
-    if ( -not ($responseStr -like "*+*")){
+    if ( -not ($responseStr -like "*+*")) {
         Write-Error "Encounter the authenticaiton failure. Exiting." -ErrorAction Stop;
-	}
+    }
 
     Show-InformationalMessage -message "Passing XOAUTH2 formatted token" -consoleColor DarkGreen;
     $sslstreamWriter.WriteLine($script:SASLXOAUTH2);
@@ -682,8 +685,7 @@ function Test-POP3XOAuth2Connectivity {
             Show-LastErrorDetails;
         }
     }
-    if ($responseStr -like "*+OK*") 
-    {
+    if ($responseStr -like "*+OK*") {
         Show-InformationalMessage -message "Getting list of messages as authentication was successfull." -consoleColor DarkGreen;
         $command = 'LIST';
         Show-InformationalMessage -message "Client: $command" -consoleColor Green;
@@ -709,7 +711,8 @@ function Test-POP3XOAuth2Connectivity {
         $sslstreamWriter.WriteLine($command);
         $responseStr = $sslstreamReader.ReadLine();
         Show-InformationalMessage -message "Server: $responseStr" -consoleColor Yellow;
-    } else {
+    }
+    else {
         Show-InformationalMessage -message "ERROR during authentication $responseStr" -consoleColor Red;
     }
 
@@ -719,12 +722,48 @@ function Test-POP3XOAuth2Connectivity {
         }
     }
 }
+function Set-SASLXOAUTH2WithToken {
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$accessToken,
+        [Parameter(Mandatory = $true)][string]$targetMailbox
+    )	    
+    $saslXoauthstring = "user=" + $targetMailbox + "$([char]0x01)auth=Bearer " + $accessToken + "$([char]0x01)$([char]0x01)";
+    $saslXoauthbytes = [System.Text.Encoding]::ASCII.GetBytes($saslXoauthstring);
+    $script:SASLXOAUTH2 = [Convert]::ToBase64String($saslXoauthbytes);
+    Show-VerboseMessage -message "SASL XOAUTH2 login string $script:SASLXOAUTH2";
+}
 
-function Test-MailOauthConnectivity {
+function Test-MailOauthConnectivityWithToken {
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$accessToken,
+        [Parameter(Mandatory = $true)][string]$targetMailbox
+    )
+    $script:userMailbox = $targetMailbox;
+    Set-SASLXOAUTH2WithToken -accessToken $accessToken -targetMailbox $targetMailbox;
     switch ($script:mailProtocol) {
         SMTP { 
             Test-SMTPXOAuth2Connectivity;
-         }
+        }
+        IMAP {
+            Test-IMAPXOAuth2Connectivity;
+        }
+        POP3 {
+            Test-POP3XOAuth2Connectivity;
+        }
+        Default {
+            Write-Error "Not implement." -ErrorAction Stop;
+        }
+    }        
+}
+
+function Test-MailOauthConnectivity {
+    Set-SASLXOAUTH2;
+    switch ($script:mailProtocol) {
+        SMTP { 
+            Test-SMTPXOAuth2Connectivity;
+        }
         IMAP {
             Test-IMAPXOAuth2Connectivity;
         }
@@ -757,4 +796,4 @@ function Disconnect-Office365MailboxOauthConnectivity {
     $script:mailProtocol = [MailProtocol]::Unknown;
     Show-InformationalMessage -message "Successfuly disconnect from outlook.office365.com" -consoleColor Green;
 }
-Export-ModuleMember Connect-Office365MailboxOauthConnectivity, Test-MailOauthConnectivity,Set-MailProtocol, Disconnect-Office365MailboxOauthConnectivity;
+Export-ModuleMember Connect-Office365MailboxOauthConnectivity, Test-MailOauthConnectivity, Set-MailProtocol, Disconnect-Office365MailboxOauthConnectivity, Test-MailOauthConnectivityWithToken;
